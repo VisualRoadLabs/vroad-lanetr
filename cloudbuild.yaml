@@ -1,0 +1,64 @@
+# CI del repo del modelo (VisualRoadLabs/visualroad-lanetr): tests + conformance del CONTRATO.
+# Verde = el modelo congelado cumple el contrato y ML Training puede instalarlo por SHA.
+# Disparado por Cloud Build 2ª gen (push/PR). Corre como sa-cicd-deployer.
+#
+# No despliega nada: este repo solo produce un PAQUETE Python que la imagen `trainer` de
+# ml-training instala con `pip install git+...lanetr@<sha>`. Opcionalmente exporta los JSON
+# declarativos (config_schema/model_info/metrics_spec) al bucket de datasets para el dashboard.
+
+substitutions:
+  _PYTHON_IMAGE: python:3.11-slim
+  _SCHEMA_BUCKET: ""   # gs://bkt-dev-datasets-usc1/_model/...  (vacío = no exportar)
+
+steps:
+  # 1) Instalar el paquete con sus dependencias de runtime + test.
+  - id: install
+    name: ${_PYTHON_IMAGE}
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir -e ".[dev]"
+
+  # 2) Tests unitarios del modelo, datos y pérdidas.
+  - id: tests
+    name: ${_PYTHON_IMAGE}
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir -e ".[dev]"
+        pytest -q tests/
+
+  # 3) Conformance del contrato (build_model/forward/predict/criterion/schema/visualizers).
+  - id: conformance
+    name: ${_PYTHON_IMAGE}
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir -e ".[dev]"
+        python conformance/test_contract.py
+
+  # 4) (Opcional) Exportar los artefactos declarativos al bucket _model/ para el dashboard.
+  - id: export-contract
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ -n "${_SCHEMA_BUCKET}" ]; then
+          pip install --no-cache-dir -e .
+          python tools/export_contract.py --out ./_contract
+          gsutil -m cp ./_contract/*.json "${_SCHEMA_BUCKET}/"
+        else
+          echo "Sin _SCHEMA_BUCKET: se omite la exportación del contrato."
+        fi
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
