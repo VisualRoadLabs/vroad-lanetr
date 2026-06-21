@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lanetr"
+version = "1.0.0"
+description = "LaneTR — modelo congelado de detección de carriles (DETR deformable + LaneIoU + matching húngaro). Paquete instalable que cumple el contrato de VisualRoad ML Training."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "VisualRoad" }]
+dependencies = [
+    "torch>=2.1",
+    "torchvision>=0.16",
+    "timm>=0.9",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "scipy>=1.11",
+    "pyyaml>=6.0",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# Solo para correr los tests / conformance del propio repo (la plataforma ML Training trae lo suyo).
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+# El paquete instalable es `lanetr` (con sus subpaquetes contract/data/losses/models).
+# `old/` está en .gitignore (no se sube al repo), por eso no hace falta excluirlo aquí.
+include = ["lanetr*"]
+exclude = ["tests*", "conformance*", "tools*", "configs*"]
+
+[tool.setuptools.package-data]
+lanetr = ["py.typed"]
