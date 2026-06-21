@@ -1,0 +1,10 @@
+# Dependencias de runtime del modelo congelado LaneTR (las mismas que declara pyproject.toml).
+# La plataforma ML Training instala el paquete por SHA: pip install git+...lanetr@<sha>
+numpy>=1.26
+Pillow>=10.0
+torch>=2.1
+torchvision>=0.16
+timm>=0.9
+scipy>=1.11
+pyyaml>=6.0
+matplotlib>=3.8
