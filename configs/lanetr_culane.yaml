@@ -1,60 +1,74 @@
 # Config de referencia del modelo congelado LaneTR (CULane).
-# Es la misma config efectiva que DEFAULT_CONFIG en lanetr/contract/spec.py.
-# La sección `model` es la ARQUITECTURA CONGELADA: no se toca (no se barre).
+# Misma config efectiva que DEFAULT_CONFIG en lanetr/contract/spec.py.
+# `arch.*` barre la CAPACIDAD de la misma familia; los campos congelados (backbone,
+# d_model, dim_ff, nhead, n_points, img_*) viven aquí pero NO se exponen en el formulario.
 # La plataforma ML Training fusiona esto con los overrides --set del formulario (CONFIG_SCHEMA).
 name: lanetr_dla34_culane
 
-model:                    # CONGELADO — no se expone en el formulario
+arch:
+  # --- barribles (en CONFIG_SCHEMA) ---
+  num_queries: 12          # 4 / 12 / 20
+  num_decoder_layers: 6    # 1–6
+  n_ref_points: 4          # 1–4 puntos de referencia a lo largo del carril
+  ref_refine: mlp          # xs / mlp (refinamiento iterativo de referencias, siempre activo)
+  load_strict: true        # en FT, exige forma idéntica del checkpoint
+  # --- congelados (no en el formulario) ---
   backbone: dla34
   pretrained: true
   d_model: 256
-  num_queries: 12
-  num_layers: 6
-  num_rows: 144
   nhead: 8
   dim_ff: 1024
-  n_points: 4             # puntos de muestreo por punto de referencia (deformable)
-  img_w: 800
-  img_h: 320
-
-data:
-  img_w: 800
-  img_h: 320
+  n_points: 4              # puntos de muestreo por punto de referencia (deformable)
   num_rows: 144
-  batch_size: 32          # A100/L4 según el tier
-  num_workers: 8
-  augment: true
-  crop_top_ratio: 0.4576271186440678   # 270/590: franja de cielo recortada (= CULane); vale para cualquier resolución
+  img_w: 800
+  img_h: 320
+  ref_y_top: 0.15
+  ref_y_bottom: 0.95
 
 optim:
-  lr: 2.0e-4              # transformer/cabezas
+  lr: 3.0e-4               # transformer/cabezas
+  backbone_lr_mult: 0.1    # backbone a 0.1x
   weight_decay: 1.0e-4
-  backbone_mult: 0.1      # backbone a 0.1x
-  slow_mult: 0.1          # deformable + anclas a 0.1x
-
-loss:
-  w_cls: 2.0
-  w_iou: 4.0              # LaneIoU domina (como CLRerNet)
-  w_xy: 0.2
-  w_ext: 0.5
-  focal_alpha: 0.25
-  focal_gamma: 2.0
-  w_theta: 0.0            # término auxiliar de ángulo (off)
-  w_smooth: 0.0           # regularizador de suavidad (off)
+  grad_clip: 0.1
+  ema_decay: 0.9999        # = momentum 1e-4 de CLRerNet
+  slow_mult: 0.1           # deformable + anclas + refinamiento a 0.1x (no en el formulario)
 
 schedule:
-  epochs: 15              # ~50 para el número final con EMA
-  warmup_iters: 1000
-  grad_clip: 0.1
+  epochs: 50               # 15 para ablation
+  warmup_epochs: 3
+  scheduler: cosine        # cosine / step / poly
+  min_lr: 1.0e-6
 
-ema:
-  enabled: true
-  decay: 0.9999           # = momentum 1e-4 de CLRerNet
-  tau: 2000.0
+loss:
+  w_cls: 1.0
+  w_iou: 2.0               # LaneIoU (la geometría es SIEMPRE LaneIoU)
+  w_xy: 0.5
+  w_ext: 0.5
+  focal_gamma: 2.0
+  cost_cls: 1.0            # costes del matcher húngaro (independientes de los pesos)
+  cost_iou: 2.0
+  cost_xy: 0.5
+  cost_ext: 0.5            # no en el formulario
+  aux_loss: true
+  focal_alpha: 0.25        # no en el formulario
+  w_theta: 0.0             # no en el formulario
+  w_smooth: 0.0            # no en el formulario
+
+data:
+  dataset_manifest: culane@1
+  batch_size: 32
+  num_workers: 8
+  seed: 42
+  crop_top_ratio: 0.4576271186440678   # 270/590: franja de cielo recortada (= CULane); vale para cualquier resolución
+  aug:
+    hflip_prob: 0.5
+    rotation_deg: 0.0
+    scale_jitter: 0.0
+    brightness: 0.0
+    contrast: 0.0
 
 train:
-  amp: true               # bf16 autocast (sin GradScaler)
+  amp: true                # bf16 autocast (sin GradScaler)
   channels_last: true
-  freeze_bn: true         # FrozenBatchNorm en el backbone
-  seed: 0
+  freeze_bn: true          # FrozenBatchNorm en el backbone
   eval_conf_thresh: 0.5
