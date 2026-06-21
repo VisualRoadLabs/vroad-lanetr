@@ -2,26 +2,20 @@
 # Verde = el modelo congelado cumple el contrato y ML Training puede instalarlo por SHA.
 # Disparado por Cloud Build 2ª gen (push/PR). Corre como sa-cicd-deployer.
 #
-# No despliega nada: este repo solo produce un PAQUETE Python que la imagen `trainer` de
-# ml-training instala con `pip install git+...lanetr@<sha>`. Opcionalmente exporta los JSON
-# declarativos (config_schema/model_info/metrics_spec) al bucket de datasets para el dashboard.
+# Este repo NO despliega: produce un PAQUETE Python que la imagen `trainer` de ml-training instala
+# con `pip install git+...lanetr@<sha>`. En push a main (con _EXPORT_SCHEMA=true) exporta además los
+# JSON declarativos (config_schema/model_info/metrics_spec) a:
+#     gs://bkt-dev-datasets-usc1/_model/lanetr@<SHORT_SHA>/
+# de donde los lee el dashboard (ligero, sin torch).
 
 substitutions:
   _PYTHON_IMAGE: python:3.11-slim
-  _SCHEMA_BUCKET: ""   # gs://bkt-dev-datasets-usc1/_model/...  (vacío = no exportar)
+  _DATASETS_BUCKET: bkt-dev-datasets-usc1   # bucket de datasets (destino del schema)
+  _MODEL_NAME: lanetr                         # nombre del modelo -> _model/<nombre>@<sha>/
+  _EXPORT_SCHEMA: "false"                     # el trigger de push a main lo pone a "true"; PR = false
 
 steps:
-  # 1) Instalar el paquete con sus dependencias de runtime + test.
-  - id: install
-    name: ${_PYTHON_IMAGE}
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        pip install --no-cache-dir -e ".[dev]"
-
-  # 2) Tests unitarios del modelo, datos y pérdidas.
+  # 1) Tests unitarios del modelo, datos y pérdidas.
   - id: tests
     name: ${_PYTHON_IMAGE}
     entrypoint: bash
@@ -32,7 +26,7 @@ steps:
         pip install --no-cache-dir -e ".[dev]"
         pytest -q tests/
 
-  # 3) Conformance del contrato (build_model/forward/predict/criterion/schema/visualizers).
+  # 2) Conformance del contrato (build_model/forward/predict/criterion/schema/visualizers).
   - id: conformance
     name: ${_PYTHON_IMAGE}
     entrypoint: bash
@@ -43,21 +37,42 @@ steps:
         pip install --no-cache-dir -e ".[dev]"
         python conformance/test_contract.py
 
-  # 4) (Opcional) Exportar los artefactos declarativos al bucket _model/ para el dashboard.
-  - id: export-contract
+  # 3) Generar los JSON declarativos (solo en push a main). Es LIGERO: export_contract.py solo
+  #    importa lanetr.contract.spec, que no usa torch -> `--no-deps` evita bajar torch en CI.
+  - id: build-schema
+    name: ${_PYTHON_IMAGE}
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ "${_EXPORT_SCHEMA}" != "true" ]; then
+          echo "PR o build sin publicación: se omite la generación del schema."
+          exit 0
+        fi
+        pip install --no-cache-dir --no-deps -e .
+        python tools/export_contract.py --out _contract
+        ls -l _contract
+
+  # 4) Subir los JSON a gs://<bucket>/_model/<modelo>@<SHORT_SHA>/ (solo en push a main).
+  - id: upload-schema
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        if [ -n "${_SCHEMA_BUCKET}" ]; then
-          pip install --no-cache-dir -e .
-          python tools/export_contract.py --out ./_contract
-          gsutil -m cp ./_contract/*.json "${_SCHEMA_BUCKET}/"
-        else
-          echo "Sin _SCHEMA_BUCKET: se omite la exportación del contrato."
+        if [ "${_EXPORT_SCHEMA}" != "true" ]; then
+          echo "PR o build sin publicación: se omite la subida del schema."
+          exit 0
         fi
+        if [ -z "${SHORT_SHA}" ]; then
+          echo "ERROR: SHORT_SHA vacío; no se puede versionar _model/<modelo>@<sha>/." >&2
+          exit 1
+        fi
+        gsutil -m cp _contract/*.json \
+          "gs://${_DATASETS_BUCKET}/_model/${_MODEL_NAME}@${SHORT_SHA}/"
+        echo "Schema publicado en gs://${_DATASETS_BUCKET}/_model/${_MODEL_NAME}@${SHORT_SHA}/"
 
 options:
   logging: CLOUD_LOGGING_ONLY
